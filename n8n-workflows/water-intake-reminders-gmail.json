@@ -1,0 +1,92 @@
+{
+  "name": "Water Intake Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "name": "Every 2 Hours",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.id, u.email, u.name, COALESCE(SUM(wl.amount), 0) as water_intake, 2000 as water_goal, CASE WHEN COALESCE(SUM(wl.amount), 0) < 1000 THEN 'behind' WHEN COALESCE(SUM(wl.amount), 0) >= 2000 THEN 'completed' ELSE 'on_track' END as status FROM users u LEFT JOIN water_logs wl ON u.id = wl.user_id AND DATE(wl.created_at) = CURRENT_DATE WHERE u.created_at >= NOW() - INTERVAL '30 days' GROUP BY u.id, u.email, u.name"
+      },
+      "name": "Get Water Intake Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate personalized water reminders\nconst userData = $input.all();\nconst reminders = [];\n\nfor (const user of userData) {\n  const data = user.json;\n  const percentage = Math.round((data.water_intake / data.water_goal) * 100);\n  const remaining = data.water_goal - data.water_intake;\n  \n  let message = '';\n  let emoji = '💧';\n  let motivation = '';\n  \n  if (data.status === 'behind') {\n    message = `Time to hydrate, ${data.name}!`;\n    motivation = 'You\\'re behind on your water goal today. Let\\'s catch up!';\n    emoji = '⚠️';\n  } else if (data.status === 'on_track') {\n    message = `Great hydration progress, ${data.name}!`;\n    motivation = 'You\\'re doing well! Keep it up to reach your goal.';\n    emoji = '👍';\n  }\n  \n  reminders.push({\n    user_id: data.id,\n    email: data.email,\n    name: data.name,\n    water_intake: data.water_intake,\n    water_goal: data.water_goal,\n    percentage: percentage,\n    remaining_ml: remaining,\n    remaining_glasses: Math.ceil(remaining / 250),\n    status: data.status,\n    message: message,\n    motivation: motivation,\n    emoji: emoji,\n    hydration_tips: [\n      'Start your day with a glass of water',\n      'Keep a water bottle visible at your desk',\n      'Set phone reminders every hour',\n      'Drink water before each meal',\n      'Flavor water with lemon or cucumber'\n    ],\n    benefits: [\n      'Boosts energy and brain function',\n      'Helps maintain body temperature',\n      'Supports kidney function',\n      'Improves skin health',\n      'Aids digestion and metabolism'\n    ]\n  });\n}\n\nreturn reminders.map(reminder => ({ json: reminder }));"
+      },
+      "name": "Generate Water Reminder",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "calai-hydration@example.com",
+        "toEmail": "={{ $json.email }}",
+        "subject": "{{ $json.emoji }} Hydration Reminder - {{ $json.percentage }}% of daily goal",
+        "emailFormat": "html",
+        "message": "<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;'><div style='background: linear-gradient(135deg, #3498db 0%, #2ecc71 100%); padding: 30px; border-radius: 15px; text-align: center; color: white; margin-bottom: 30px;'><h1 style='margin: 0; font-size: 28px;'>{{ $json.emoji }} Time to Hydrate!</h1><p style='margin: 10px 0 0 0; font-size: 18px; opacity: 0.9;'>{{ $json.name }}</p><p style='margin: 5px 0 0 0; font-size: 16px; opacity: 0.8;'>{{ $json.water_intake }}ml / {{ $json.water_goal }}ml ({{ $json.percentage }}%)</p></div><div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'><h2 style='color: #333; margin-top: 0;'>💧 Your Hydration Status</h2><div style='background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0;'><div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'><span style='color: #666;'>Current Intake:</span><span style='font-weight: bold; color: #3498db;'>{{ $json.water_intake }}ml</span></div><div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'><span style='color: #666;'>Daily Goal:</span><span style='font-weight: bold; color: #2ecc71;'>{{ $json.water_goal }}ml</span></div><div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;'><span style='color: #666;'>Remaining:</span><span style='font-weight: bold; color: #e74c3c;'>{{ $json.remaining_ml }}ml ({{ $json.remaining_glasses }} glasses)</span></div><div style='background: linear-gradient(90deg, #3498db {{ $json.percentage }}%, #ecf0f1 {{ $json.percentage }}%); height: 20px; border-radius: 10px; margin-top: 15px;'></div></div><div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'><h2 style='color: #333; margin-top: 0;'>💡 {{ $json.message }}</h2><p style='color: #555; font-size: 16px; line-height: 1.6;'>{{ $json.motivation }}</p></div><div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'><h2 style='color: #333; margin-top: 0;'>🌟 Hydration Tips</h2><ul style='color: #555; line-height: 1.6;'>{{ $json.hydration_tips.map(tip => `<li style='margin-bottom: 8px;'>${tip}</li>`).join('') }}</ul></div><div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'><h2 style='color: #333; margin-top: 0;'>💪 Benefits of Staying Hydrated</h2><ul style='color: #555; line-height: 1.6;'>{{ $json.benefits.map(benefit => `<li style='margin-bottom: 8px;'>${benefit}</li>`).join('') }}</ul></div><div style='text-align: center; margin-top: 30px;'><a href='https://empty-lines-exist.loca.lt' style='background: linear-gradient(135deg, #3498db 0%, #2ecc71 100%); color: white; text-decoration: none; padding: 15px 30px; border-radius: 25px; font-weight: bold; display: inline-block;'>Log Water Intake</a></div><div style='text-align: center; margin-top: 20px; color: #999; font-size: 12px;'><p>Stay hydrated, stay healthy! 💧</p><p>CalAI - Your Personal Health Assistant</p></div></div>",
+        "sender": "Gmail",
+        "binaryAttachments": []
+      },
+      "name": "Send Water Reminder",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Every 2 Hours": {
+      "main": [
+        [
+          {
+            "node": "Get Water Intake Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Water Intake Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Water Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Water Reminder": {
+      "main": [
+        [
+          {
+            "node": "Send Water Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {}
+}

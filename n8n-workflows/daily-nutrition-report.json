@@ -1,0 +1,167 @@
+{
+  "name": "Daily Nutrition Report - AI Enhanced",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT u.id, u.email, u.name, COALESCE(up.daily_calorie_target, 2000) as daily_calorie_target, COALESCE(up.daily_protein_target, 50) as daily_protein_target, COALESCE(up.daily_carbs_target, 250) as daily_carbs_target, COALESCE(up.daily_fat_target, 65) as daily_fat_target, COALESCE(SUM(mfi.calories), 0) as total_calories, COALESCE(SUM(mfi.protein_g), 0) as total_protein, COALESCE(SUM(mfi.carbs_g), 0) as total_carbs, COALESCE(SUM(mfi.fat_g), 0) as total_fat FROM users u LEFT JOIN user_profiles up ON u.id = up.user_id LEFT JOIN meal_logs ml ON u.id = ml.user_id AND DATE(ml.logged_at) = CURRENT_DATE LEFT JOIN meal_food_items mfi ON ml.id = mfi.meal_log_id WHERE u.created_at >= NOW() - INTERVAL '30 days' GROUP BY u.id, u.email, u.name, up.daily_calorie_target, up.daily_protein_target, up.daily_carbs_target, up.daily_fat_target"
+      },
+      "name": "Get User Nutrition Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate nutrition insights and generate report\nconst userData = $input.all();\nconst reports = [];\n\nfor (const user of userData) {\n  const data = user.json;\n  const insights = [];\n  const caloriePercentage = (data.total_calories / data.daily_calorie_target) * 100;\n  const proteinPercentage = (data.total_protein / data.daily_protein_target) * 100;\n  \n  // Generate insights based on performance\n  if (caloriePercentage < 80) {\n    insights.push(\"You're under your calorie goal. Consider adding healthy snacks!\");\n  } else if (caloriePercentage > 120) {\n    insights.push(\"You exceeded your calorie goal. Focus on portion control tomorrow.\");\n  } else {\n    insights.push(\"Great job hitting your calorie target! 🎉\");\n  }\n  \n  if (proteinPercentage < 80) {\n    insights.push(\"Increase your protein intake with lean meats or plant-based proteins.\");\n  }\n  \n  const report = {\n    user_id: data.id,\n    email: data.email,\n    name: data.name,\n    date: new Date().toLocaleDateString(),\n    calories: {\n      consumed: data.total_calories,\n      target: data.daily_calorie_target,\n      percentage: Math.round(caloriePercentage)\n    },\n    protein: {\n      consumed: data.total_protein,\n      target: data.daily_protein_target,\n      percentage: Math.round(proteinPercentage)\n    },\n    insights: insights,\n    emoji: caloriePercentage >= 80 && caloriePercentage <= 120 ? '🎉' : caloriePercentage < 80 ? '📈' : '⚠️'\n  };\n  \n  reports.push(report);\n}\n\nreturn reports.map(report => ({ json: report }));"
+      },
+      "name": "Generate Nutrition Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert nutritionist and health coach. Analyze the user's daily nutrition data and provide a personalized, encouraging summary. Be specific, actionable, and motivational. Use emojis for engagement. Keep it concise but comprehensive."
+            },
+            {
+              "role": "user",
+              "content": "Please analyze this nutrition data and provide a personalized summary:\n\nUser: {{ $json.name }}\nDate: {{ $json.date }}\n\nCalories: {{ $json.calories.consumed }} / {{ $json.calories.target }} ({{ $json.calories.percentage }}%)\nProtein: {{ $json.protein.consumed }}g / {{ $json.protein.target }}g ({{ $json.protein.percentage }}%)\n\nCurrent insights: {{ $json.insights.join(', ') }}\n\nPlease provide:\n1. Overall performance assessment (1-2 sentences)\n2. Key achievement or area for improvement\n3. One specific recommendation for tomorrow\n4. Motivational closing message\n\nFormat as JSON with keys: assessment, highlight, recommendation, motivation"
+            }
+          ]
+        }
+      },
+      "name": "AI Personalized Summary",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process AI response and prepare email content\nconst nutritionData = $input.all();\nconst emailContents = [];\n\nfor (const item of nutritionData) {\n  const data = item.json;\n  const aiSummary = JSON.parse(data.message.content);\n  \n  const emailContent = {\n    user_id: data.user_id,\n    email: data.email,\n    name: data.name,\n    date: data.date,\n    calories: data.calories,\n    protein: data.protein,\n    insights: data.insights,\n    emoji: data.emoji,\n    ai_summary: aiSummary,\n    email_subject: `📊 Your Daily Nutrition Report - ${data.name} - ${data.date}`\n  };\n  \n  emailContents.push(emailContent);\n}\n\nreturn emailContents.map(content => ({ json: content }));"
+      },
+      "name": "Process AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate HTML email template with AI summary\nconst emailData = $input.all();\nconst htmlEmails = [];\n\nfor (const email of emailData) {\n  const data = email.json;\n  const ai = data.ai_summary;\n  \n  const htmlContent = `\n<div style='font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f8f9fa;'>\n  <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; border-radius: 15px; text-align: center; color: white; margin-bottom: 30px;'>\n    <h1 style='margin: 0; font-size: 28px;'>${data.emoji} Daily Nutrition Report</h1>\n    <p style='margin: 10px 0 0 0; font-size: 18px; opacity: 0.9;'>${data.name}</p>\n    <p style='margin: 5px 0 0 0; font-size: 16px; opacity: 0.8;'>${data.date}</p>\n  </div>\n  \n  <div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'>\n    <h2 style='color: #333; margin-top: 0;'>📊 AI Assessment</h2>\n    <div style='background: #e8f5e8; padding: 20px; border-radius: 10px; margin: 15px 0;'>\n      <p style='color: #2d5016; font-size: 16px; line-height: 1.6; margin: 0;'>${ai.assessment}</p>\n    </div>\n  </div>\n  \n  <div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'>\n    <h2 style='color: #333; margin-top: 0;'>� Today's Performance</h2>\n    <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;'>\n      <div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px;'>\n        <div style='font-size: 24px; font-weight: bold; color: #667eea;'>${data.calories.consumed}</div>\n        <div style='color: #666; font-size: 14px;'>Calories</div>\n        <div style='color: #999; font-size: 12px;'>of ${data.calories.target} goal</div>\n      </div>\n      <div style='text-align: center; padding: 20px; background: #f8f9fa; border-radius: 10px;'>\n        <div style='font-size: 24px; font-weight: bold; color: #28a745;'>${data.protein.consumed}g</div>\n        <div style='color: #666; font-size: 14px;'>Protein</div>\n        <div style='color: #999; font-size: 12px;'>of ${data.protein.target}g goal</div>\n      </div>\n    </div>\n  </div>\n  \n  <div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'>\n    <h2 style='color: #333; margin-top: 0;'>💡 Key Highlight</h2>\n    <div style='background: #fff3e0; padding: 20px; border-radius: 10px; margin: 15px 0;'>\n      <p style='color: #e65100; font-size: 16px; line-height: 1.6; margin: 0;'>${ai.highlight}</p>\n    </div>\n  </div>\n  \n  <div style='background: white; padding: 25px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px;'>\n    <h2 style='color: #333; margin-top: 0;'>📝 Tomorrow's Recommendation</h2>\n    <div style='background: #e3f2fd; padding: 20px; border-radius: 10px; margin: 15px 0;'>\n      <p style='color: #1565c0; font-size: 16px; line-height: 1.6; margin: 0;'>${ai.recommendation}</p>\n    </div>\n  </div>\n  \n  <div style='background: linear-gradient(135deg, #4caf50 0%, #8bc34a 100%); padding: 25px; border-radius: 15px; text-align: center; color: white; margin-bottom: 20px;'>\n    <h3 style='margin: 0 0 15px 0; font-size: 20px;'>🎉 Motivation</h3>\n    <p style='margin: 0; font-size: 16px; line-height: 1.5;'>${ai.motivation}</p>\n  </div>\n  \n  <div style='text-align: center; margin-top: 30px;'>\n    <a href='https://empty-lines-exist.loca.lt' style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; padding: 15px 30px; border-radius: 25px; font-weight: bold; display: inline-block;'>Open CalAI App</a>\n  </div>\n  \n  <div style='text-align: center; margin-top: 20px; color: #999; font-size: 12px;'>\n    <p>🤖 Powered by CalAI Nutrition AI</p>\n    <p>Your personalized health journey continues!</p>\n  </div>\n</div>\n  `;\n  \n  const emailData = {\n    to: data.email,\n    subject: data.email_subject,\n    html: htmlContent,\n    from: 'calai-nutrition@example.com'\n  };\n  \n  htmlEmails.push({ json: emailData });\n}\n\nreturn htmlEmails;"
+      },
+      "name": "Generate AI Email Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "calai-nutrition@example.com",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "message": "={{ $json.html }}",
+        "sender": "Gmail",
+        "binaryAttachments": []
+      },
+      "name": "Send AI Email Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get User Nutrition Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User Nutrition Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Nutrition Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Nutrition Report": {
+      "main": [
+        [
+          {
+            "node": "AI Personalized Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Personalized Summary": {
+      "main": [
+        [
+          {
+            "node": "Process AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process AI Response": {
+      "main": [
+        [
+          {
+            "node": "Generate AI Email Template",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Email Template": {
+      "main": [
+        [
+          {
+            "node": "Send AI Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}
